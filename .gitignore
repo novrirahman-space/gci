@@ -1,0 +1,14 @@
+# Build artifacts
+bin/
+*.exe
+*.out
+*.test
+*.log
+
+# Modules
+vendor/
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/
