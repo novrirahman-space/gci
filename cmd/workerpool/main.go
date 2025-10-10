@@ -24,9 +24,11 @@ func worker(ctx context.Context, workerID int, jobs <-chan Job, results chan<- R
 	for job := range jobs {
 		select {
 		case <-ctx.Done():
+			fmt.Printf("[worker %d] context canceled, stop\n", workerID)
 			return
 		default:
 			out, err := job.Work(ctx)
+			fmt.Printf("[worker %d] processed job %d\n", workerID, job.ID)
 			results <- Result{JobID: job.ID, Out: out, Err: err}
 		}
 	}
