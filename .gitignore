@@ -1,14 +1,21 @@
-# Build artifacts
+# Go
 bin/
 *.exe
 *.out
 *.test
 *.log
-
-# Modules
 vendor/
 
-# OS/IDE
+# macOS / IDE
 .DS_Store
 .vscode/
 .idea/
+
+# Next.js/Node
+gci-web/node_modules/
+gci-web/.next/
+gci-web/out/
+gci-web/.vercel/
+gci-web/.turbo/
+gci-web/.env
+gci-web/.env.*
