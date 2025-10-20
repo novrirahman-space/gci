@@ -28,6 +28,9 @@ type Task struct {
 	ClassID string `json:"class_id"`
 	Title string `json:"title"`
 	Description string `json:"description"`
+	DueAt *time.Time `json:"due_at,omitempty"`
+	IsClosed bool `json:"is_closed"`
+	ClosedAt *time.Time `json:"closed_at,omitempty"`
 }
 
 // ===== Store (thread-safe) =====
@@ -82,6 +85,17 @@ func pathID(path, base string) (string, bool) {
 		return "", false
 	}
 	return id, true
+}
+
+func parseRFC339Ptr(s string) (*time.Time, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // ===== Handlers: Classes =====
@@ -256,6 +270,7 @@ func (s *Store) handleTasks(w http.ResponseWriter, r *http.Request) {
 			ClassID string `json:"class_id"`
 			Title string `json:"title"`
 			Description string `json:"description"`
+			DueAt string `json:"due_at"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -275,6 +290,12 @@ func (s *Store) handleTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		dueAt, err := parseRFC339Ptr(p.DueAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid due_at (use RFC3339)")
+			return
+		}
+
 		id, err := newID()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to generate id")
@@ -286,6 +307,9 @@ func (s *Store) handleTasks(w http.ResponseWriter, r *http.Request) {
 			ClassID: p.ClassID,
 			Title: p.Title,
 			Description: p.Description,
+			DueAt: dueAt,
+			IsClosed: false,
+			ClosedAt: nil,
 		}
 
 		s.muTasks.Lock()
@@ -332,6 +356,7 @@ func (s *Store) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 			ClassID string `json:"class_id"`
 			Title string `json:"title"`
 			Description string `json:"description"`
+			DueAt string `json:"due_at"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
@@ -351,6 +376,12 @@ func (s *Store) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		dueAt, err := parseRFC339Ptr(p.DueAt)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid due_at (use RFC3339)")
+			return
+		}
+
 		s.muTasks.Lock()
 		t, ok := s.tasks[id]
 		if !ok {
@@ -361,6 +392,7 @@ func (s *Store) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		t.ClassID = p.ClassID
 		t.Title = p.Title
 		t.Description = p.Description
+		t.DueAt = dueAt
 		s.tasks[id] = t
 		s.muTasks.Unlock()
 
@@ -383,6 +415,79 @@ func (s *Store) handleTaskByID(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PUT, DELETE")
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (s *Store) handleTaskClose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		w.Header().Set("Allow", "PATCH")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !strings.HasSuffix(r.URL.Path, "/close") {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	base := strings.TrimSuffix(r.URL.Path, "/close")
+	id, ok := pathID(base, "/tasks/")
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	s.muTasks.Lock()
+	t, exists := s.tasks[id]
+	if !exists {
+		s.muTasks.Unlock()
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if !t.IsClosed {
+		now := time.Now()
+		t.IsClosed = true
+		t.ClosedAt = &now
+		s.tasks[id] = t
+	}
+	out := t
+	s.muTasks.Unlock()
+	
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Store) handleTaskOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPatch {
+		w.Header().Set("Allow", "PATCH")
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	if !strings.HasSuffix(r.URL.Path, "/open"){
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	base := strings.TrimSuffix(r.URL.Path, "/open")
+	id, ok := pathID(base, "/tasks/")
+	if !ok {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	s.muTasks.Lock()
+	t, exists := s.tasks[id]
+	if !exists {
+		s.muTasks.Unlock()
+		writeError(w, http.StatusNotFound, "task not found")
+		return
+	}
+	if t.IsClosed {
+		t.IsClosed = false
+		t.ClosedAt = nil
+		s.tasks[id] = t
+	}
+	out := t
+	s.muTasks.Unlock()
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ===== Server & Middleware =====
@@ -416,7 +521,18 @@ func main() {
 
 	// tasks
 	mux.HandleFunc("/tasks", store.handleTasks)
-	mux.HandleFunc("/tasks/", store.handleTaskByID)
+	mux.HandleFunc("/tasks/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/close"):
+			store.handleTaskClose(w, r)
+			return
+		case strings.HasSuffix(r.URL.Path, "/open"):
+			store.handleTaskOpen(w, r)
+			return
+		default:
+			store.handleTaskByID(w, r)
+		}
+	})
 
 	srv := &http.Server{
 		Addr: ":8080",
