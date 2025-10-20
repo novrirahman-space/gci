@@ -67,6 +67,8 @@ http://localhost:8080
 | `GET` | `/tasks/{id}` | Get task by ID |
 | `PUT` | `/tasks/{id}` | Update task |
 | `DELETE` | `/tasks/{id}` | Delete task |
+| `PATCH` | `/tasks/{id}/close` | Close task |
+| `PATCH` | `/tasks/{id}/open` | Open task |
 
 ### Key Features
 ✅ Thread-safe using `sync.RWMutex`  
